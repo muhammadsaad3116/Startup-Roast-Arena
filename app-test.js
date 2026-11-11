@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { openDb } from './Db.js';
+import { openDb } from './db.js';
 import { createApp } from './server.js';
 import { mockLlm, runInvestor } from './AI.js';
 import { validateVerdict, aiScore, leaderboardScore } from './rules.js';

@@ -5,9 +5,9 @@ import crypto from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
-import connectDB from './Db.js';
+import connectDB from './db.js';
 import User from './models/User.js';
-import Idea from './models/Idea.js';
+import Idea from './models/idea.js';
 import Pitch from './models/pitch.js';
 import Verdict from './models/verdict.js';
 import Vote from './models/vote.js';
