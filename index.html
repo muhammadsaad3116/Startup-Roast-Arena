@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Startup Roast Arena</title>
+<style>
+  :root { --bg:#fafafa; --card:#fff; --text:#1a1a1a; --muted:#666; --line:#ddd; --accent:#c2410c; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#161616; --card:#222; --text:#eee; --muted:#aaa; --line:#444; --accent:#fb923c; }
+  }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, Arial, sans-serif; background: var(--bg); color: var(--text); margin: 0; }
+  main { max-width: 760px; margin: 0 auto; padding: 16px; }
+  h1 { margin: 8px 0; } h2 { margin-top: 28px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin: 10px 0; }
+  .muted { color: var(--muted); font-size: 0.9em; }
+  input, textarea, select { width: 100%; padding: 8px; margin: 4px 0 10px; border: 1px solid var(--line);
+    border-radius: 6px; background: var(--card); color: var(--text); font: inherit; }
+  button { background: var(--accent); color: #fff; border: 0; padding: 8px 14px; border-radius: 6px; cursor: pointer; font: inherit; }
+  button.alt { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  .row { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+  .err { color: #dc2626; min-height: 1.2em; }
+  .lb-row { cursor: pointer; }
+  .score { font-weight: 700; color: var(--accent); }
+  .up { color: #16a34a; } .down { color: #dc2626; }
+</style>
+</head>
+<body>
+<main>
+  <h1>🦈 Startup Roast Arena</h1>
+  <p class="muted">Post your idea. Three AI investors roast it. The community votes.</p>
+
+  <div id="auth" class="card"></div>
+  <div id="err" class="err"></div>
+
+  <h2>Leaderboard</h2>
+  <div id="lb"></div>
+
+  <div id="detail"></div>
+
+  <h2 id="formTitle">Pitch your idea</h2>
+  <div class="card" id="pitchForm">
+    <label>Problem</label><textarea id="problem" rows="2" maxlength="500" placeholder="What problem are you solving?"></textarea>
+    <label>Solution</label><textarea id="solution" rows="2" maxlength="500" placeholder="How do you solve it?"></textarea>
+    <label>Customer</label><textarea id="customer" rows="2" maxlength="500" placeholder="Who pays, and why?"></textarea>
+    <label>Roast level</label>
+    <select id="level"><option value="low">Low</option><option value="medium" selected>Medium</option><option value="hard">Hard</option></select>
+    <button id="submit">Pitch to the investors</button>
+    <button class="alt" id="cancelRepitch" style="display:none">Cancel re-pitch</button>
+  </div>
+</main>
+
+<script>
+const INVESTORS = {
+  strict:  { name: 'The Strict Investor', emoji: '🧐' },
+  funny:   { name: 'The Funny Investor',  emoji: '😂' },
+  dreamer: { name: 'The Dreamer',         emoji: '🌈' }
+};
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let me = null;             // { name, token }
+let repitchId = null;      // idea id when re-pitching
+try { me = JSON.parse(localStorage.getItem('me')); } catch {}
+
+async function api(path, method = 'GET', body) {
+  const res = await fetch('/api' + path, {
+    method,
+    headers: { 'content-type': 'application/json', ...(me ? { authorization: 'Bearer ' + me.token } : {}) },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'request failed');
+  return data;
+}
+const showErr = e => { $('err').textContent = e ? (e.message || e) : ''; };
+
+function renderAuth() {
+  $('auth').innerHTML = me
+    ? `<div class="row"><span>Signed in as <b>${esc(me.name)}</b></span><button class="alt" id="logout">Log out</button></div>`
+    : `<div class="row"><input id="uname" placeholder="Pick a display name" maxlength="40" style="max-width:260px;margin:0">
+       <button id="login">Join</button></div>`;
+  if (me) $('logout').onclick = () => { me = null; localStorage.removeItem('me'); renderAuth(); };
+  else $('login').onclick = async () => {
+    try { showErr(); me = await api('/login', 'POST', { name: $('uname').value }); localStorage.setItem('me', JSON.stringify(me)); renderAuth(); }
+    catch (e) { showErr(e); }
+  };
+}
+
+async function loadLeaderboard() {
+  const rows = await api('/leaderboard');
+  $('lb').innerHTML = rows.length ? rows.map((r, i) => `
+    <div class="card lb-row" data-id="${r.id}">
+      <div class="row"><span><b>#${i + 1}</b> ${esc(r.problem.slice(0, 70))}${r.problem.length > 70 ? '…' : ''}</span>
+      <span class="score">${r.score}</span></div>
+      <div class="muted">by ${esc(r.owner)} · v${r.version} · AI ${r.ai_score}/10 · ${r.votes} vote(s)</div>
+    </div>`).join('') : '<p class="muted">No ranked ideas yet. Be the first.</p>';
+  document.querySelectorAll('.lb-row').forEach(el => el.onclick = () => openIdea(el.dataset.id));
+}
+
+function verdictHtml(v) {
+  const inv = INVESTORS[v.investor];
+  if (v.status !== 'ok') return `<div class="card"><b>${inv.emoji} ${inv.name}</b><p class="muted">Passed (could not give a verdict this time).</p></div>`;
+  const offer = v.offer_lakh > 0 ? `Offer: Rs ${v.offer_lakh} lakh for ${v.equity_pct}% equity <span class="muted">(play money)</span>` : 'No offer.';
+  return `<div class="card"><div class="row"><b>${inv.emoji} ${inv.name}</b><span class="score">${v.score}/10</span></div>
+    <p>${esc(v.roast)}</p><p><b>Tip:</b> ${esc(v.tip)}</p><p class="muted">${offer}</p></div>`;
+}
+
+async function openIdea(id) {
+  try {
+    showErr();
+    const idea = await api('/ideas/' + id);
+    const last = idea.pitches.at(-1);
+    const delta = idea.delta == null ? '' :
+      ` <span class="${idea.delta >= 0 ? 'up' : 'down'}">(${idea.delta >= 0 ? '+' : ''}${idea.delta} vs previous version)</span>`;
+    const isOwner = me && me.name === idea.owner;
+    $('detail').innerHTML = `
+      <h2>Idea by ${esc(idea.owner)} · version ${last.version}</h2>
+      <div class="card">
+        <p><b>Problem:</b> ${esc(last.problem)}</p><p><b>Solution:</b> ${esc(last.solution)}</p>
+        <p><b>Customer:</b> ${esc(last.customer)}</p>
+        <p class="muted">Roast level: ${esc(last.roast_level)} · AI score: ${last.ai_score ?? 'unranked'}${delta}</p>
+        <div class="row"><span>👍 ${idea.votes} vote(s)</span>
+          ${isOwner ? '<button id="repitch">Re-pitch this idea</button>' : '<button id="vote">Upvote</button>'}</div>
+      </div>
+      ${last.verdicts.map(verdictHtml).join('')}`;
+    if (isOwner) $('repitch').onclick = () => startRepitch(idea);
+    else $('vote').onclick = async () => { try { await api(`/ideas/${id}/vote`, 'POST'); await openIdea(id); await loadLeaderboard(); } catch (e) { showErr(e); } };
+    $('detail').scrollIntoView({ behavior: 'smooth' });
+  } catch (e) { showErr(e); }
+}
+
+function startRepitch(idea) {
+  const last = idea.pitches.at(-1);
+  repitchId = idea.id;
+  $('problem').value = last.problem; $('solution').value = last.solution; $('customer').value = last.customer;
+  $('level').value = last.roast_level;
+  $('formTitle').textContent = 'Re-pitch: improve your idea';
+  $('cancelRepitch').style.display = '';
+  $('pitchForm').scrollIntoView({ behavior: 'smooth' });
+}
+$('cancelRepitch').onclick = () => {
+  repitchId = null; $('formTitle').textContent = 'Pitch your idea'; $('cancelRepitch').style.display = 'none';
+  ['problem', 'solution', 'customer'].forEach(f => $(f).value = '');
+};
+
+$('submit').onclick = async () => {
+  const btn = $('submit');
+  btn.disabled = true; btn.textContent = 'Investors are thinking…';
+  try {
+    showErr();
+    const body = { problem: $('problem').value, solution: $('solution').value, customer: $('customer').value, roast_level: $('level').value };
+    const idea = repitchId ? await api(`/ideas/${repitchId}/repitch`, 'POST', body) : await api('/ideas', 'POST', body);
+    $('cancelRepitch').onclick();
+    await openIdea(idea.id); await loadLeaderboard();
+  } catch (e) { showErr(e); }
+  btn.disabled = false; btn.textContent = 'Pitch to the investors';
+};
+
+renderAuth(); loadLeaderboard().catch(showErr);
+</script>
+</body>
+</html>
